@@ -1,0 +1,56 @@
+name: backfill-lzh
+
+on:
+  workflow_dispatch:
+    inputs:
+      start:
+        description: "start date (YYYYMMDD)"
+        required: true
+      end:
+        description: "end date (YYYYMMDD)"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests pandas lxml pyarrow
+
+      - name: Fetch LZH (range)
+        run: |
+          python scripts/fetch_lzh.py --start ${{ inputs.start }} --end ${{ inputs.end }} --out raw
+
+      - name: Normalize curated (range)
+        run: |
+          python scripts/normalize.py --start ${{ inputs.start }} --end ${{ inputs.end }} --raw raw --curated curated
+
+      - name: Commit curated
+        run: |
+          git config user.name "boatrace-bot"
+          git config user.email "boatrace-bot@users.noreply.github.com"
+          git add curated
+          if git diff --cached --quiet; then
+            echo "No curated changes."
+          else
+            git commit -m "curated: backfill ${{ inputs.start }}-${{ inputs.end }}"
+            git push
+          fi
+
+      - name: Upload raw artifacts (7 days)
+        uses: actions/upload-artifact@v4
+        with:
+          name: raw_backfill_${{ inputs.start }}_${{ inputs.end }}_${{ github.run_id }}
+          path: raw
+          retention-days: 7
